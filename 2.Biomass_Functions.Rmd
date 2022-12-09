@@ -1,0 +1,297 @@
+---
+title: "Biomass_Functions"
+author: "Laura Juvany"
+date: '2022-11-18'
+output: html_document
+---
+
+# Biomass functions
+
+Install and call the needed packages
+
+```{r}
+install.packages("carData", dep = TRUE)
+install.packages("MASS", dep = TRUE)
+install.packages("nlme", dep = TRUE)
+install.packages("ggpubr", dep = TRUE)
+install.packages("glmmTMB", dep = TRUE)
+install.packages("bbmle", dep = TRUE)
+install.packages("ggplot2", dep = TRUE)
+install.packages("qplot", dep = TRUE)
+install.packages("plotrix", dep = TRUE)
+install.packages("rsq", dep = TRUE)
+install.packages("performance", dep = TRUE)
+install.packages("MuMIn", dep = TRUE)
+install.packages("sjPlot", dep = TRUE)
+
+library(carData)
+library(MASS)
+library(nlme)
+library(ggpubr)
+library(glmmTMB)
+library(bbmle)
+library(ggplot2)
+library(plotrix)
+library(rsq)
+library(performance)
+library(MuMIn)
+library(sjPlot)
+```
+
+Upload data, each row is a sampled subplot
+
+```{r}
+WP1_AllSitesData <- read.csv("...", sep=",", dec = ".", header = TRUE)
+```
+
+Remove those rows where the height was not measured (due to mistakes in the field) and had NA values.
+
+```{r}
+WP1_AllSitesData <- WP1_AllSitesData[-c(20, 165, 445, 446, 703, 704, 799, 800, 857, 858), ]
+```
+
+Split the data set per plant species
+
+```{r}
+WP1_Blueberry <- droplevels(subset(WP1_AllSitesData,Species=="Blueberry"))
+WP1_Cowberry <- droplevels(subset(WP1_AllSitesData,Species=="Cowberry"))
+WP1_Heather <- droplevels(subset(WP1_AllSitesData,Species=="Heather"))
+```
+
+## Bilberry biomass functions
+
+Check colinearity between predictor variables
+
+```{r}
+coli_BB <- WP1_Blueberry[, colnames(WP1_Blueberry)[c(2, 8, 10, 11, 17:19, 30, 31)]]
+
+ggpairs(coli_BB,
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Data transformations Create a new df to get rid of those rows where we did not spot a species as it was hidden under another in a subplot, hence its percentage cover is 0 but we reported weight data. This is due to the fact that we cannot model its biomass if we do not have any data on its cover in this study.
+
+```{r}
+WP1_Blueberry_2 <- WP1_Blueberry[which(WP1_Blueberry$Cover > 0),]
+```
+
+Transform dry weight and percentage cover to its natural logarithm.
+
+```{r}
+WP1_Blueberry_2$drywt_log <- log(WP1_Blueberry_2$drywt_m2)
+WP1_Blueberry_2$cover_log <- log(WP1_Blueberry_2$Cover)
+```
+
+Build all 7 presented models, check summary, residuals against predicted plots and r squared values
+
+```{r}
+BBM1 <- glmmTMB(drywt_log ~ -1 + cover_log + (1|Plot:UniqueStand:Site),
+                 data=WP1_Blueberry_2,
+                 family=gaussian(link="identity"))
+summary(BBM1)
+BBM1_res <- residuals(BBM1)
+BBM1_pred <- predict(BBM1)
+plot (BBM1_pred, BBM1_res)
+r2(BBM1)
+
+BBM2 <- glmmTMB(drywt_log ~ -1 + cover_log:Site + (1|Plot:UniqueStand),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+
+BBM3 <- glmmTMB(drywt_log ~ -1 + cover_log + PlotBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+
+BBM4 <- glmmTMB(drywt_log ~ -1 + cover_log + PineBA + SpruceBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+
+BBM5 <- glmmTMB(drywt_log ~ -1 + cover_log + SpruceBA + SI_M1 + (1|Plot:UniqueStand:Site),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+
+BBM6 <- glmmTMB(drywt_log ~ -1 + cover_log + Mean.age + (1|Plot:UniqueStand:Site),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+
+BBM7 <- glmmTMB(drywt_log ~ -1 + cover_log + Height + (1|Plot:UniqueStand:Site),
+                data=WP1_Blueberry_2,
+                family=gaussian(link="identity"))
+```
+
+Build tables with the output of the models
+
+```{r}
+#run this if making the table gives trouble:Error in gsub("`", "", x[[i]], fixed = TRUE) : input string 1 is invalid in this locale
+Sys.setlocale('LC_ALL','C') 
+
+modBB <- tab_model(BBM1,BBM2,BBM3,BBM4,BBM5,BBM6,BBM7, pred.labels = c("Bilberry cover", "Bilberry cover SB", "Bilberry cover HB", "Bilberry cover NB", "Total basal area", "Pine basal area", "Spruce basal area", "Site Index", "Mean stand age", "Bilberry height"), 
+          dv.labels = c( "Model 1", "Model 2", "Model 3","Model 4", "Model 5","Model 6","Model 7" ),
+          string.pred = "Coeffcient",
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value" ,
+          show.r2 = TRUE ,
+          show.aic = TRUE,
+          show.stat = TRUE,
+          show.re.var = FALSE,
+          title="Bilberry")
+
+```
+
+## Cowberry biomass functions
+
+Check colinearity between predictor variables
+
+```{r}
+coli_CB <- WP1_Cowberry[, colnames(WP1_Cowberry)[c(8, 10, 11, 17:19, 30, 31)]]
+
+ggpairs(coli_CB,
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Data transformations Create a new df to get rid of those rows where we did not spot a species as it was hidden under another in a subplot, hence its percentage cover is 0 but we reported weight data. This is due to the fact that we cannot model its biomass if we do not have any data on its cover in this study.
+
+```{r}
+WP1_Cowberry_2 <- WP1_Cowberry[which(WP1_Cowberry$Cover > 0),]
+```
+
+Transform dry weight and percentage cover to its natural logarithm.
+
+```{r}
+WP1_Cowberry_2$drywt_log <- log(WP1_Cowberry_2$drywt_m2)
+WP1_Cowberry_2$cover_log <- log(WP1_Cowberry_2$Cover)
+```
+
+Build all 7 presented models, check summary, residuals against predicted plots and r squared values
+
+```{r}
+CBM1 <- glmmTMB(drywt_log ~ -1 + cover_log + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+summary(CBM1)
+CBM1_res <- residuals(CBM1)
+CBM1_pred <- predict(CBM1)
+plot (CBM1_pred, CBM1_res)
+r2(CBM1)
+
+CBM2 <- glmmTMB(drywt_log ~ -1 + cover_log:Site + (1|Plot:UniqueStand),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+
+CBM3 <- glmmTMB(drywt_log ~ -1 + cover_log + PlotBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+
+CBM4 <- glmmTMB(drywt_log ~ -1 + cover_log + PineBA + SpruceBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+
+CBM5 <- glmmTMB(drywt_log ~ -1 + cover_log + SpruceBA + SI_M1 + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+
+CBM6 <- glmmTMB(drywt_log ~ -1 + cover_log + Mean.age + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+
+CBM7 <- glmmTMB(drywt_log ~ -1 + cover_log + Height + (1|Plot:UniqueStand:Site),
+                data=WP1_Cowberry_2,
+                family=gaussian(link="identity"))
+```
+
+Build table with the output of the models
+
+```{r}
+modCB <- tab_model(CBM1,CBM2,CBM3,CBM4,CBM5,CBM6,CBM7, pred.labels = c("Cowberry cover", "Cowberry cover SB", "Cowberry cover HB", "Cowberry cover NB", "Total basal area", "Pine basal area", "Spruce basal area", "Site Index", "Mean stand age", "Cowberry height"), 
+          dv.labels = c( "Model 1", "Model 2", "Model 3","Model 4", "Model 5","Model 6","Model 7" ),
+          string.pred = "Coeffcient",
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value" ,
+          show.r2 = TRUE,
+          show.aic = TRUE,
+          show.stat=TRUE,
+          show.re.var = FALSE,
+          title="Cowberry")
+```
+
+## Heather biomass functions
+
+Check colinearity between predictor variables
+
+```{r}
+coli_H <- WP1_Heather[, colnames(WP1_Heather)[c(8, 10, 11, 17:19, 30, 31)]]
+
+ggpairs(coli_H,
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Data transformations Create a new df to get rid of those rows where we did not spot a species as it was hidden under another in a subplot, hence its percentage cover is 0 but we reported weight data. This is due to the fact that we cannot model its biomass if we do not have any data on its cover in this study.
+
+```{r}
+WP1_Heather_2 <- WP1_Heather[which(WP1_Heather$Cover > 0),]
+```
+
+Transform dry weight and percentage cover to its natural logarithm.
+
+```{r}
+WP1_Heather_2$drywt_log <- log(WP1_Heather_2$drywt_m2)
+WP1_Heather_2$cover_log <- log(WP1_Heather_2$Cover)
+```
+
+Build all 7 presented models, check summary, residuals against predicted plots and r squared values
+
+```{r}
+HM1 <- glmmTMB(drywt_log ~ -1 + cover_log + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+summary(HM1)
+HM1_res <- residuals(HM1)
+HM1_pred <- predict(HM1)
+plot (HM1_pred, HM1_res)
+r2(HM1)
+
+HM2 <- glmmTMB(drywt_log ~ -1 + cover_log:Site + (1|Plot:UniqueStand),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+
+HM3 <- glmmTMB(drywt_log ~ -1 + cover_log +  PlotBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+
+HM4 <- glmmTMB(drywt_log ~ -1 + cover_log +PineBA + SpruceBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+
+HM5 <- glmmTMB(drywt_log ~ -1 + cover_log + SI_M1 + SpruceBA + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+
+HM6 <- glmmTMB(drywt_log ~ -1 + cover_log + Mean.age + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+
+HM7 <- glmmTMB(drywt_log ~ -1 + cover_log + Height + (1|Plot:UniqueStand:Site),
+                data=WP1_Heather_2,
+                family=gaussian(link="identity"))
+```
+
+Build table with the output of the models
+
+```{r}
+tab_model(HM1,HM2,HM3,HM4,HM5,HM6,HM7, pred.labels = c("Heather cover", "Heather cover SB", "Heather cover HB", "Heather cover NB", "Total basal area", "Pine basal area", "Spruce basal area", "Site Index", "Mean stand age", "Heather height"), 
+          dv.labels = c( "Model 1", "Model 2", "Model 3","Model 4", "Model 5","Model 6","Model 7" ),
+          string.pred = "Coeffcient",
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value" ,
+          show.r2 = TRUE,
+          show.aic = TRUE,
+          show.stat=TRUE,
+          show.re.var = FALSE,
+          title="Heather")
+```

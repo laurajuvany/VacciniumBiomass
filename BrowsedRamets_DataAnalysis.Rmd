@@ -1,0 +1,179 @@
+---
+title: "BrowsedRamets_DataAnalysis"
+author: "Laura Juvany"
+date: '2022-12-08'
+output: html_document
+---
+
+# Browsed ramets data analysis
+
+This script is to analyse the bite diameters measured on bilberry, cowberry and heather in sites with different local cervid population densities (LC, low cervid, and HC, high cervid population density)
+
+Install and call needed packages
+```{r}
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("ggpubr")
+install.packages("sjPlot")
+install.packages("forcats")
+install.packages("hrbrthemes")
+install.packages("viridisLite")
+install.packages("MASS") 
+install.packages("reshape2") 
+install.packages("reshape") 
+
+library("ggplot2")
+library("dplyr")
+library("ggpubr")
+library("sjPlot")
+library("forcats")
+library("hrbrthemes")
+library("viridis")
+library("MASS") 
+library("reshape2") 
+library("reshape") 
+```
+First, we upload the data and create a df with the data from both years, 2020 and 2021, and remove 2 NA values (sampling error)
+```{r}
+Bites2020 <- read.csv(".../BrowsedShrubs_Alldata.csv")
+Bites2021 <-read.csv(".../AllBrowsedShrubs_2021.csv")
+
+BitesAll_pre <- read.csv(".../2020vs2021_Browsed.csv")
+
+#Remove NA, 2 values
+BitesAll <- BitesAll_pre[-c(44, 926), ]
+
+```
+
+## Differences wet vs dry stem diameter
+
+We will use the data of ramets measured in 2020, where we measured each bite before and after drying, and separate it per plant species
+```{r}
+BB_Bites_20 <- subset(Bites2020, Shrub.spp=="Bilberry")
+CB_Bites_20 <- subset(Bites2020, Shrub.spp=="Cowberry")
+H_Bites_20 <- subset(Bites2020, Shrub.spp=="Heather")
+```
+Differences in bilberry
+```{r}
+DiffBB <- BB_Bites_20[, c("Bite.diam.dried..mm.", "Bite.diam.fresh..mm.")]
+t.test(DiffBB$Bite.diam.dried..mm.,DiffBB$Bite.diam.fresh..mm., paired=TRUE)
+```
+Differences in cowberry
+```{r}
+DiffCB <- CB_Bites_20[, c("Bite.diam.dried..mm.", "Bite.diam.fresh..mm.")]
+t.test(DiffCB$Bite.diam.dried..mm.,DiffCB$Bite.diam.fresh..mm., paired=TRUE)
+```
+Differences in heather
+```{r}
+DiffH <- H_Bites_20[, c("Bite.diam.dried..mm.", "Bite.diam.fresh..mm.")]
+t.test(DiffH$Bite.diam.dried..mm.,DiffH$Bite.diam.fresh..mm., paired=TRUE)
+```
+We found signifficant differences for all three species in the bite diameter before and after drying the plants. This difference is on average of 0.03mm, which we consider within measurement error.
+
+## Check differences in bite diameter between site and sampling year
+Subset data per plant species
+```{r}
+BB_Bites <- subset(BitesAll, Shrub.spp=="Bilberry")
+CB_Bites <- subset(BitesAll, Shrub.spp=="Cowberry")
+H_Bites <- subset(BitesAll, Shrub.spp=="Heather")
+```
+
+### Data descriptives
+Calculate mean bite diameter, median, maximum value, minimum value and percentiles per stand, year and site
+```{r}
+MeansBite20and21 <- aggregate(BitesAll$Bite.diam.fresh..mm., list(BitesAll$Year, BitesAll$Site, BitesAll$Stand.nr, BitesAll$Shrub.spp), mean)
+MeansBite20and21$Median <- aggregate(BitesAll$Bite.diam.fresh..mm., list(BitesAll$Year, BitesAll$Site, BitesAll$Stand.nr, BitesAll$Shrub.spp), median)
+MeansBite20and21$Min <- aggregate(BitesAll$Bite.diam.fresh..mm., list(BitesAll$Year, BitesAll$Site, BitesAll$Stand.nr, BitesAll$Shrub.spp), min)
+MeansBite20and21$Max <- aggregate(BitesAll$Bite.diam.fresh..mm., list(BitesAll$Year, BitesAll$Site, BitesAll$Stand.nr, BitesAll$Shrub.spp), max)
+MeansBite20and21$Quantile <- aggregate(BitesAll$Bite.diam.fresh..mm., list(BitesAll$Year, BitesAll$Site, BitesAll$Stand.nr, BitesAll$Shrub.spp), quantile, probs = c(.1,.9))
+```
+Save the data to do the table in Appendix 7
+```{r}
+write.csv(MeansBite20and21, "C:/Users/lajs0002/Desktop/Laura/BiteDataAnalysis/MeansBite20and21.csv" )
+```
+### Two-way ANOVA and Tukey post-hoc test
+For bilberry
+```{r}
+BB_Bites$Site_Man <- as.factor((BB_Bites$Site_Man))
+BB_Bites$Year <- as.factor((BB_Bites$Year))
+
+BBanova <- aov(Bite.diam.fresh..mm. ~ Site_Man*Year, data = BB_Bites)
+summary(BBanova)
+
+TukeyHSD(BBanova)
+```
+For cowberry
+```{r}
+CB_Bites$Site_Man <- as.factor((CB_Bites$Site_Man))
+CB_Bites$Year <- as.factor((CB_Bites$Year))
+
+CBanova <- aov(Bite.diam.fresh..mm. ~ Site_Man*Year, data = CB_Bites)
+summary(CBanova)
+
+TukeyHSD(CBanova)
+```
+For heather
+```{r}
+H_Bites$Site_Man <- as.factor((H_Bites$Site_Man))
+H_Bites$Year <- as.factor((H_Bites$Year))
+
+Hanova <- aov(Bite.diam.fresh..mm. ~ Site_Man*Year, data = H_Bites)
+summary(Hanova)
+
+TukeyHSD(Hanova)
+```
+### Violin graph
+Make a violin graph to show the differences between experimental sites and years, add the means in each group
+```{r}
+pBB <- BB_Bites %>%
+  mutate(Site = fct_reorder(Site_Man, Bite.diam.fresh..mm.)) %>%
+  mutate(Site = factor(Site, levels=c("HC", "LC"))) %>%
+  ggplot(aes(fill=Year, y=Bite.diam.fresh..mm., x=Site)) + 
+  geom_violin(position="dodge", alpha=0.5) +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  stat_summary(fun.data =mean_sdl, fun.args = list(mult = 1), geom = "pointrange", colour="black", shape=18, size=0.75, position=position_dodge(width = 0.9)) +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))) +
+  xlab("") +
+  ylab("Bite diameter (mm)") +
+  ylim(0,3.5)
+
+pCB <- CB_Bites %>%
+  mutate(Site = fct_reorder(Site_Man, Bite.diam.fresh..mm.)) %>%
+  mutate(Site = factor(Site, levels=c("HC", "LC"))) %>%
+  ggplot(aes(fill=Year, y=Bite.diam.fresh..mm., x=Site)) +
+  geom_violin(position="dodge", alpha=0.5) +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  stat_summary(fun.data =mean_sdl, fun.args = list(mult = 1), geom = "pointrange", colour="black", shape=18, size=0.75, position=position_dodge(width = 0.9)) +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))) +
+  xlab("") +
+  ylab("Bite diameter (mm)") +
+  ylim(0,3.5)
+
+pH <- H_Bites %>%
+  mutate(Site = fct_reorder(Site_Man, Bite.diam.fresh..mm.)) %>%
+  mutate(Site = factor(Site, levels=c("HC", "LC"))) %>%
+  ggplot(aes(fill=Year, y=Bite.diam.fresh..mm., x=Site)) + 
+  geom_violin(position="dodge", alpha=0.5) +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  stat_summary(fun.data =mean_sdl, fun.args = list(mult = 1), geom = "pointrange", colour="black", shape=18, size=0.75, position=position_dodge(width = 0.9)) +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))) +
+  xlab("") +
+  ylab("Bite diameter (mm)") +
+  ylim(0,3.5)
+
+ggarrange(
+  pBB, pCB, pH, labels = c("  A Bilberry", " B Cowberry", "  C Heather"),
+  common.legend = TRUE, legend = "right",
+  ncol = 1
+)
+
+pBB + pCB + pH + facet_grid(cols = vars(supp))
+```
+
+
+
+
+
+
+
+

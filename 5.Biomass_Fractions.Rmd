@@ -1,0 +1,927 @@
+---
+title: "Biomass_Fractions"
+author: "Laura Juvany"
+date: '2022-11-18'
+output: html_document
+---
+
+# Forage Biomass fractions
+
+Install and call the needed packages
+```{r}
+install.packages("ggplot2")
+install.packages("GGally")
+install.packages("glmmTMB")
+install.packages("performance")
+install.packages("MuMIn")
+install.packages("DHARMa")
+install.packages("tidyr")
+install.packages("dplyr")
+install.packages("car")
+install.packages("beepr")
+
+library(ggplot2)
+library(GGally)
+library(glmmTMB)
+library(performance)
+library(MuMIn)
+library(DHARMa)
+library(tidyr)
+library(dplyr)
+library(car)
+library(beepr)
+```
+Upload data
+```{r}
+Prop_SandL <- read.csv(".../WP1_SubB_Prop_SandL_Variables.csv")
+```
+Rename column names, easier to work with
+```{r}
+Prop_SandL <- Prop_SandL %>% 
+  rename(
+    FR1 = Prop_FR1_SandL,
+    FR2 = Prop_FR2_SandL,
+    FR3 = Prop_FR3_SandL,
+    FR4 = Prop_FR4_SandL,
+    FR5 = Prop_FR5_SandL,
+    FR6 = Prop_FR6_SandL,
+    FR7 = Prop_FR7_SandL
+  )
+```
+Transform data from horizontal to vertical, so I get a row per proportion
+```{r}
+long_Prop_SandL <- Prop_SandL %>% gather(FR, PROP, 10:16)
+```
+Divide the data per plant species
+```{r}
+Prop_SandL_BB <- droplevels(subset(long_Prop_SandL,Species=="Blueberry"))
+Prop_SandL_CB <- droplevels(subset(long_Prop_SandL,Species=="Cowberry"))
+Prop_SandL_H <- droplevels(subset(long_Prop_SandL,Species=="Heather"))
+```
+
+## Bilberry biomass fractions
+
+Transform the data with a function so it doesn't contain true 0s and 1s
+```{r}
+y.transf.betareg <- function(y){
+  n.obs <- sum(!is.na(y))
+  (y * (n.obs - 1) + 0.5) / n.obs
+}
+
+Prop_SandL_BB$Proportion_tr <- y.transf.betareg(Prop_SandL_BB$PROP)
+```
+Check correlation between variables
+For bilberry, the following variables were correlated: total basal area, pine basal area and mean age, mean age and stand site index, and percentage cover and shrub height.
+```{r}
+ggpairs(New_Prop_SandL_BB,
+        columns = c(4,9:17),
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Prepare data
+```{r}
+#Take only complete cases, data with no NA -> There were NA values in the Shrub height, 21 (mistakes when collecting the data, those cases are removed)
+NoNA_Prop_SandL_BB <- Prop_SandL_BB[complete.cases(Prop_SandL_BB), ]
+#We decided to remove FR7 in this case, it has too many 0s, and can be discussed in the paper (less digestible and available as edible biomass for cervids), lost 83 data points
+NoF7_Prop_SandL_BB <- subset(NoNA_Prop_SandL_BB, FR!="FR7")
+#Get rid of outlier -> only one case, where the proportion was larger than 50%
+New_Prop_SandL_BB <- subset(NoF7_Prop_SandL_BB, PROP < 0.5)
+#Transform site into a factor
+New_Prop_SandL_BB$Site <- as.factor(New_Prop_SandL_BB$Site)
+```
+### Build models
+For each full model we will indicate which of the correlated variables will be included. Then, we present the full model, the dredge function that gives us the list of all model combinations from the full one. Right after we include the best fitting model from that combination, and the commands to obtain the summary, coefficient variables for the model and the ANOVA analysis to check the significance of the interactions.
+
+Full Model 1, we obtain best fitting model 1
+The full model contains total basal area, site, and cover.
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + Cover + FR*Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB1 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB1 <- glmmTMB(Proportion_tr ~ FR + FR:Site + StandSI + SpruceBA + FR:Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB1)
+r2_nakagawa(AllFR_BB1, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB1,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 2, we obtain best fitting model 2
+The full model contains total basal area and cover.
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + Cover + FR*Cover + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB2 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB2 <- glmmTMB(Proportion_tr ~ FR + SpruceBA + FR:StandSI + FR:Cover + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB2)
+r2_nakagawa(AllFR_BB2, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB2,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 3, we obtain best fitting model 3
+The full model contains total basal area, height and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB3 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB3 <- glmmTMB(Proportion_tr ~ FR + SpruceBA + StandSI + FR:MeanShrubHeight + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB3)
+r2_nakagawa(AllFR_BB3, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB3,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 4, we obtain best fitting model 3
+With total basal area and height
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB4 <- dredge(AllFR, rank="AIC")
+```
+Full model 5, we obtain best fitting model 4
+With total basal area and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB5 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB4 <- glmmTMB(Proportion_tr ~ FR + FR:Site + SpruceBA + StandSI + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB4)
+r2_nakagawa(AllFR_BB4, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB4,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 6, we obtain best fitting model 5
+With total basal area
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PlotBA + PlotBA*FR + SpruceBA + SpruceBA*FR + StandSI + FR*StandSI + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB6 <- dredge(AllFR, rank="AIC")
+AllFR_BB5 <- glmmTMB(Proportion_tr ~ FR + SpruceBA + FR:StandSI + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB5)
+r2_nakagawa(AllFR_BB5, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB5,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 7, we obtain best fitting model 6
+With pine basal area, site and cover
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + Cover + FR*Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB7 <- dredge(AllFR, rank="AIC")
+AllFR_BB6 <- glmmTMB(Proportion_tr ~ FR + FR:Site + PineBA + FR:Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB6)
+r2_nakagawa(AllFR_BB6, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB6,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 8, we obtain best fitting model 2
+With pine basal area and cover
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + Cover + FR*Cover + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB8 <- dredge(AllFR, rank="AIC")
+```
+Full model 9, we obtain best fitting model 3
+With pine basal area, height and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB9 <- dredge(AllFR, rank="AIC")
+```
+Full model 10, we obtain best fitting model 3
+With pine basal area and height
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB10 <- dredge(AllFR, rank="AIC")
+```
+Full model 11, we obtain best fitting model 4
+With pine basal area and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB11 <- dredge(AllFR, rank="AIC")
+```
+Full model 12, we obtain best fitting model 5
+With pine basal area
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB12 <- dredge(AllFR, rank="AIC")
+```
+Full model 13, we obtain best fitting model 7
+With mean age, cover and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + Cover + FR*Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB13 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB7 <- glmmTMB(Proportion_tr ~ FR + FR:Site + FR:Cover + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB7)
+r2_nakagawa(AllFR_BB7, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB7,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 14, we obtain best fitting model 8
+With mean age and cover
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + Cover + FR*Cover + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB14 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB8 <- glmmTMB(Proportion_tr ~ FR + SpruceBA + FR:Cover + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+summary(AllFR_BB8)
+r2_nakagawa(AllFR_BB8, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB8,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 15, we obtain best fitting model 9
+With mean age, height and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB15 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB9 <- glmmTMB(Proportion_tr ~ FR + MeanAge + Site + SpruceBA + FR:MeanShrubHeight + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB9)
+r2_nakagawa(AllFR_BB9, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB9,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 16, we obtain best fitting best fitting model 10
+With mean age and height
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB16 <- dredge(AllFR, rank="AIC")
+#3.10 Best fitting from previous
+AllFR_BB10 <- glmmTMB(Proportion_tr ~ FR + MeanAge + SpruceBA + FR:MeanShrubHeight + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB10)
+r2_nakagawa(AllFR_BB10, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB10,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 17, we obtain best fitting model 11
+With mean age and site
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB17 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB11 <- glmmTMB(Proportion_tr ~ FR + FR:Site + (1|Plot:UniqueStand),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB11)
+r2_nakagawa(AllFR_BB11, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_BB11,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 18, we obtain best fitting model 12
+With mean age
+```{r}
+AllFR <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+outB18 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_BB12 <- glmmTMB(Proportion_tr ~ FR + SpruceBA + (1|Plot:UniqueStand:Site),
+                 data=New_Prop_SandL_BB,
+                 family=beta_family(link="logit"),
+                 na.action = "na.fail")
+
+summary(AllFR_BB12)
+r2_nakagawa(AllFR_BB12, by_group = FALSE, tolerance = 1e-05)
+```
+
+
+
+## Cowberry biomass fractions
+
+Transform the data with a function so it doesn't contain true 0s and 1s
+```{r}
+y.transf.betareg <- function(y){
+  n.obs <- sum(!is.na(y))
+  (y * (n.obs - 1) + 0.5) / n.obs
+}
+
+Prop_SandL_CB$Proportion_tr <- y.transf.betareg(Prop_SandL_CB$PROP)
+```
+Check correlation between variables
+For cowberry, the following variables were correlated: total basal area, pine basal area and mean age, mean age and stand site index.
+```{r}
+ggpairs(New_Prop_SandL_CB,
+        columns = c(4,9:17),
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Prepare data
+```{r}
+#Only takes complete cases, data with no NA
+NoNA_Prop_SandL_CB <- Prop_SandL_CB[complete.cases(Prop_SandL_CB), ]
+#We decided to remove FR7 in this case, it has too many 0, and can be discussed in the paper
+NoF7_Prop_SandL_CB <- subset(NoNA_Prop_SandL_CB, FR!="FR7")
+#Get rid of outliers, all those cases when the BM proportion is >50% in one fraction
+New_Prop_SandL_CB <- subset(NoF7_Prop_SandL_CB, PROP < 0.5)
+#Transform site into a factor
+New_Prop_SandL_CB$Site <- as.factor(New_Prop_SandL_CB$Site)
+```
+### Build models
+For each full model we will indicate which of the correlated variables will be included. Then, we present the full model, the dredge function that gives us the list of all model combinations from the full one. Right after we include the best fitting model from that combination, and the commands to obtain the summary, coefficient variables for the model and the ANOVA analysis to check the significance of the interactions.
+
+Full model 1, we obtain model 1
+With total basal area, site, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC1 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous 
+AllFR_CB1 <- glmmTMB(Proportion_tr ~ FR + FR:Site + FR:SpruceBA + FR:MeanShrubHeight + Cover + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+
+summary(AllFR_CB1)
+r2_nakagawa(AllFR_CB1, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB1,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 2, we obtain best fitting model 2
+With total basal area, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC2 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_CB2 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA + FR:StandSI + FR:MeanShrubHeight + Cover + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+
+summary(AllFR_CB2)
+r2_nakagawa(AllFR_CB2, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB2,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 3, we obtain best fitting model 3
+With total basal area and site
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC3 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_CB3 <- glmmTMB(Proportion_tr ~ FR + FR:Site + FR:SpruceBA + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC3 <- dredge(AllFR, rank="AIC")
+summary(AllFR_CB3)
+r2_nakagawa(AllFR_CB3, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB3,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 4, we obtain best fitting model 4
+With total basal area
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC4 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_CB4 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA + FR:StandSI + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC4 <- dredge(AllFR, rank="AIC")
+summary(AllFR_CB4)
+r2_nakagawa(AllFR_CB4, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB4,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 5, we obtain best fitting model 1
+With pine basal area, site, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC5 <- dredge(AllFR, rank="AIC")
+```
+Full model 6, we obtain best fitting model 2
+With pine basal area, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC6 <- dredge(AllFR, rank="AIC")
+```
+Full model 7, we obtain best fitting model 3
+With pine basal area and site
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC7 <- dredge(AllFR, rank="AIC")
+```
+Full model 8, we obtain best fitting model 4
+With pine basal area
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC8 <- dredge(AllFR, rank="AIC")
+```
+Full model 9, we obtain best fitting model 1
+With mean age, site, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC9 <- dredge(AllFR_CB, rank="AIC")
+```
+Full model 10, we obtain best fitting model 5
+With mean age, cover and height
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC10 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_CB5 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA + FR:MeanShrubHeight + Cover + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+summary(AllFR_CB5)
+r2_nakagawa(AllFR_CB5, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB5,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 11, we obtain best fitting model 3
+With mean age and site
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + (1|Plot:UniqueStand),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC11 <- dredge(AllFR_CB, rank="AIC")
+```
+Full model 12, we obtain best fitting model 6
+With mean age
+```{r}
+AllFR_CB <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC12 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_CB6 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA + (1|Plot:UniqueStand:Site),
+                    data=New_Prop_SandL_CB,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outC6 <- dredge(AllFR, rank="AIC")
+summary(AllFR_CB6)
+r2_nakagawa(AllFR_CB6, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_CB6,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+
+## Heather biomass fractions
+
+Transform the data with a function so it doesn't contain true 0s and 1s
+```{r}
+y.transf.betareg <- function(y){
+  n.obs <- sum(!is.na(y))
+  (y * (n.obs - 1) + 0.5) / n.obs
+}
+
+Prop_SandL_H$Proportion_tr <- y.transf.betareg(Prop_SandL_H$PROP)
+```
+Check correlation between variables
+For heather, the following variables were correlated: total basal area, pine basal area and mean age, mean age and stand site index.
+```{r}
+ggpairs(New_Prop_SandL_H,
+        columns = c(4,9:17),
+        lower=list(continuous = "smooth", combo = "facethist", discrete = "facetbar", na = "na"),
+        diag=list(continuous=wrap("barDiag", color='white', fill='darkgreen')),
+        upper=list(continuous=wrap("cor", method = "spearman", title='Corr', stars=T)))
+```
+
+Prepare data
+```{r}
+#Only takes complete cases, data with no NA
+NoNA_Prop_SandL_H <- Prop_SandL_H[complete.cases(Prop_SandL_H), ]
+#We decided to remove FR7 in this case, it has too many 0, and can be discussed in the paper
+NoF7_Prop_SandL_H <- subset(NoNA_Prop_SandL_H, FR!="FR7")
+#Get rid of outliers, all those cases when the BM proportion is >50% in one fraction
+New_Prop_SandL_H <- subset(NoF7_Prop_SandL_H, PROP < 0.5)
+#Transform site into a factor
+New_Prop_SandL_H$Site <- as.factor(New_Prop_SandL_H$Site)
+```
+### Build models
+For each full model we will indicate which of the correlated variables will be included. Then, we present the full model, the dredge function that gives us the list of all model combinations from the full one. Right after we include the best fitting model from that combination, and the commands to obtain the summary, coefficient variables for the model and the ANOVA analysis to check the significance of the interactions.
+
+Full model 1, we obtain best fitting model 1
+With total basal area, site, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH1 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous 
+AllFR_H1 <- glmmTMB(Proportion_tr ~ FR + FR:Site + FR:SpruceBA + MeanShrubHeight,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+
+outH1 <- dredge(AllFR, rank="AIC")
+summary(AllFR_H1)
+r2_nakagawa(AllFR_H1, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H1,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 2, we obtain best fitting model 2
+With total basal area, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH2 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H2 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA + MeanShrubHeight,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH2 <- dredge(AllFR, rank="AIC")
+summary(AllFR_H2)
+r2_nakagawa(AllFR_H2, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H2,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 3, we obtain best fitting model 3
+With total basal area and site
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH3 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H3 <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR:Site + FR:SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+summary(AllFR_H3)
+r2_nakagawa(AllFR_H3, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H3,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 4, we obtain best fitting model 4
+With total basal area
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + PlotBA + FR*PlotBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH4 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H4 <- glmmTMB(Proportion_tr ~ FR + FR:SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+summary(AllFR_H4)
+r2_nakagawa(AllFR_H4, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H4,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 5, we obtain best fitting model 5
+With pine basal area, site, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH5 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H5 <- glmmTMB(Proportion_tr ~ FR + PineBA + FR:Site + FR:SpruceBA + MeanShrubHeight,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+summary(AllFR_H5)
+r2_nakagawa(AllFR_H5, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H5,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 6, we obtain best fitting model 2
+With pine basal area, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH6 <- dredge(AllFR_H, rank="AIC")
+```
+Full model 7, we obtain best fitting model 6
+With pine basal area and site
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH7 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H6 <- glmmTMB(Proportion_tr ~ FR + PineBA + FR:Site + FR:SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+summary(AllFR_H6)
+r2_nakagawa(AllFR_H6, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H6,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 8, we obtain best fitting model 4
+With pine basal area
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + PineBA + FR*PineBA + SpruceBA + FR*SpruceBA + StandSI + FR*StandSI,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH8 <- dredge(AllFR_H, rank="AIC")
+```
+Full model 9, we obtained best fitting model 1
+With mean age, site, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH9 <- dredge(AllFR_H, rank="AIC")
+```
+Full model 10, we obtain best fitting model 2
+With mean age, cover and height
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA + MeanShrubHeight + FR*MeanShrubHeight + Cover + FR*Cover,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH10 <- dredge(AllFR_H, rank="AIC")
+```
+Full model 11, we obtain best fitting model 7
+With mean age and site
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + Site + FR*Site + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH11 <- dredge(AllFR, rank="AIC")
+#Best fitting from previous
+AllFR_H7 <- glmmTMB(Proportion_tr ~ FR + FR:Site + FR:SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+
+summary(AllFR_H7)
+r2_nakagawa(AllFR_H7, by_group = FALSE, tolerance = 1e-05)
+
+glmmTMB:::Anova.glmmTMB(
+  AllFR_H7,
+  type = ("III"),
+  test.statistic = ("Chisq"),
+  component = "cond",
+  vcov. = vcov(AllFR)[["cond"]])
+```
+Full model 12, we obtain best fitting model 4
+With mean age
+```{r}
+AllFR_H <- glmmTMB(Proportion_tr ~ FR + MeanAge + FR*MeanAge + SpruceBA + FR*SpruceBA,
+                    data=New_Prop_SandL_H,
+                    family=beta_family(link="logit"),
+                    na.action = "na.fail")
+outH12 <- dredge(AllFR_H, rank="AIC")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
